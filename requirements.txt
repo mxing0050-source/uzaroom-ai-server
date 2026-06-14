@@ -2,3 +2,10 @@ fastapi
 uvicorn
 supabase
 httpx
+pillow
+torch
+torchvision
+ultralytics
+git+https://github.com/openai/CLIP.git
+deepface
+tf-keras
