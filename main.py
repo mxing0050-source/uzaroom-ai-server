@@ -1,21 +1,13 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 from supabase import create_client
-from contextlib import asynccontextmanager
 import os, httpx, tempfile
 from PIL import Image
 from io import BytesIO
 
 models = {}
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    import clip, torch
-    models["clip"], models["pre"] = clip.load("ViT-B/32", device="cpu")
-    models["torch"] = torch
-    yield
-
-app = FastAPI(lifespan=lifespan)
+app = FastAPI()
 
 supabase = create_client(
     os.environ["SUPABASE_URL"],
@@ -28,6 +20,10 @@ async def fetch_image(url: str) -> Image.Image:
     return Image.open(BytesIO(r.content)).convert("RGB")
 
 def run_clip(image: Image.Image):
+    if "clip" not in models:
+        import clip, torch
+        models["clip"], models["pre"] = clip.load("ViT-B/32", device="cpu")
+        models["torch"] = torch
     import clip
     torch = models["torch"]
     categories = ["food", "sport", "nature", "person", "vehicle", "animal", "art", "technology"]
