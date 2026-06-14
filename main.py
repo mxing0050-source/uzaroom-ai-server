@@ -2,20 +2,17 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from supabase import create_client
 from contextlib import asynccontextmanager
-import os, httpx, clip, torch
+import os, httpx, tempfile
 from PIL import Image
 from io import BytesIO
-from ultralytics import YOLO
-from deepface import DeepFace
-import tempfile
 
-# ── load models once at startup ──────────────────────────────
 models = {}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    models["yolo"] = YOLO("yolov8n.pt")
-    models["clip"], models["clip_preprocess"] = clip.load("ViT-B/32", device="cpu")
+    import clip, torch
+    models["clip"], models["pre"] = clip.load("ViT-B/32", device="cpu")
+    models["torch"] = torch
     yield
 
 app = FastAPI(lifespan=lifespan)
@@ -25,20 +22,16 @@ supabase = create_client(
     os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 )
 
-# ── helpers ───────────────────────────────────────────────────
 async def fetch_image(url: str) -> Image.Image:
     async with httpx.AsyncClient() as client:
         r = await client.get(url, timeout=15)
     return Image.open(BytesIO(r.content)).convert("RGB")
 
-def run_yolo(image: Image.Image):
-    results = models["yolo"](image)
-    names = models["yolo"].names
-    return list({names[int(c)] for c in results[0].boxes.cls})
-
 def run_clip(image: Image.Image):
+    import clip
+    torch = models["torch"]
     categories = ["food", "sport", "nature", "person", "vehicle", "animal", "art", "technology"]
-    tensor = models["clip_preprocess"](image).unsqueeze(0)
+    tensor = models["pre"](image).unsqueeze(0)
     text = clip.tokenize([f"a photo of {c}" for c in categories])
     with torch.no_grad():
         logits, _ = models["clip"](tensor, text)
@@ -48,15 +41,15 @@ def run_clip(image: Image.Image):
 
 def run_deepface(image: Image.Image):
     try:
+        from deepface import DeepFace
         with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as f:
             image.save(f.name)
             result = DeepFace.analyze(f.name, actions=["age", "gender", "emotion"], silent=True)
         r = result[0]
         return {"age": r["age"], "gender": r["dominant_gender"], "emotion": r["dominant_emotion"]}
     except:
-        return None  # چهره‌ای پیدا نشد
+        return None
 
-# ── endpoint ──────────────────────────────────────────────────
 class AnalyzeRequest(BaseModel):
     post_id: str
     image_url: str
@@ -68,15 +61,13 @@ def root():
 @app.post("/analyze")
 async def analyze(req: AnalyzeRequest):
     image = await fetch_image(req.image_url)
-
-    yolo_labels = run_yolo(image)
     clip_category, clip_score = run_clip(image)
-    face_data = run_deepface(image) if "person" in yolo_labels else None
+    face_data = run_deepface(image)
 
     supabase.table("post_analysis").insert({
         "post_id": req.post_id,
         "image_url": req.image_url,
-        "labels": yolo_labels,
+        "labels": [clip_category],
         "clip_category": clip_category,
         "clip_score": clip_score,
         "face_data": face_data,
@@ -85,7 +76,6 @@ async def analyze(req: AnalyzeRequest):
 
     return {
         "post_id": req.post_id,
-        "labels": yolo_labels,
         "clip_category": clip_category,
         "clip_score": clip_score,
         "face_data": face_data
