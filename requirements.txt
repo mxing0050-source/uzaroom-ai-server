@@ -6,6 +6,7 @@ pillow
 torch
 torchvision
 ultralytics
+opencv-python-headless
 git+https://github.com/openai/CLIP.git
 deepface
 tf-keras
